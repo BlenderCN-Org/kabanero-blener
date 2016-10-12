@@ -1,13 +1,25 @@
 import os
+import json
+import datetime
 
 import bpy
 import mathutils
 import bpy_extras.io_utils
-import json
 # import logging
 # logging.basicConfig(level=logging.DEBUG,format='(%(threadName)-10s) %(message)s',)
 
 from progress_report import ProgressReport, ProgressReportSubstep
+
+def _get_info_block(version):
+    info = {
+        "blender_version": bpy.app.version_string,
+        "blender_file": os.path.basename(bpy.data.filepath),
+        "export_timestamp": datetime.datetime.now().isoformat()
+    }
+    if version:
+        info["exporter_version"] = "{}.{}.{}".format(*version)
+
+    return info
 
 def _get_library_name(obj):
     """ gets filename from filepath eg. //testlib.blend => testlib """
@@ -16,9 +28,16 @@ def _get_library_name(obj):
     e = filepath.rfind(".")
     return filepath[s:e]
 
-def _get_data_dict(obj, prefab=False):
+def _is_prefab(o):
+    return o.dupli_type == "GROUP"
+
+def _get_data_dict(obj):
     res = {
         "name":         obj.name,
+        "active":       obj.get("kb_active"),
+        "visible":      obj.get("kb_visible"),
+        "collide":      obj.get("kb_collide"),
+        "actor":        obj.get("kb_actor"),
         "transform": {
             "position": {
                 "x":    obj.location.x,
@@ -39,16 +58,21 @@ def _get_data_dict(obj, prefab=False):
         }
     }
 
-    if prefab:
+    if _is_prefab(obj):
         res["library"] = _get_library_name(obj)
         res["object"] = obj.dupli_group.name
 
+    # Remove none values
+    res = {k: v for k, v in res.items() if v}
+
     return res
 
-def _is_prefab(o):
-    return o.dupli_type == "GROUP"
+def _write_file(data, filepath):
+    with open(filepath, "w") as f:
+        f.write(data)
+        f.close()
 
-def save(context, filepath, *, use_selection=True, global_matrix=None):
+def save(context, filepath, *, use_selection=True, global_matrix=mathutils.Matrix(), script_version = None):
     scene = context.scene
 
     # Exit edit mode
@@ -61,27 +85,18 @@ def save(context, filepath, *, use_selection=True, global_matrix=None):
         objects = scene.objects
 
     map_data = {
-        "prefabs": [],
-        "entities": []
+        "info": _get_info_block(script_version),
+        "objects": [],
     }
 
     for o in objects:
-        if _is_prefab(o):
-            map_data["prefabs"].append(_get_data_dict(o, prefab=True))
-        else:
-            map_data["entities"].append(_get_data_dict(o, prefab=False))
+        # TODO: Apply global matrix
+        map_data["objects"].append(_get_data_dict(o))
 
-    # # Prefabs
-    # prefab_objects = [o for o in objects if _is_prefab(o)]
-    # for p in prefab_objects:
-    #     map_data["prefabs"].append(_get_data_dict(p, prefab=True))
-    #
-    # # Other objects
-    # entity_objects = [o for o in objects if _is_prefab(o)]
-    #
-    # for p in prefab_objects:
-    #     map_data["entities"].append(_get_data_dict(p, prefab=False))
+    j = json.dumps(map_data, indent=2, sort_keys=True)
 
-    print(json.dumps(map_data, indent=2, sort_keys=True))
+    # print(j)
+
+    _write_file(j, filepath)
 
     return {'FINISHED'}
